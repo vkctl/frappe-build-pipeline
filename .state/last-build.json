@@ -1,0 +1,41 @@
+{
+  "apps": {
+    "erpnext": {
+      "repo": "frappe/erpnext",
+      "ref": "v16.18.3",
+      "sha": "2807c9f08fff3f161c0a2e10745a26aa6331ffd5"
+    },
+    "hrms": {
+      "repo": "frappe/hrms",
+      "ref": "v16.7.0",
+      "sha": "a29cc8875aab1f22707b011568f5f1f190861fc8"
+    },
+    "india-compliance": {
+      "repo": "resilient-tech/india-compliance",
+      "ref": "v16.4.0",
+      "sha": "80b315689a42a4c1ba747a05b82fdce61fefa021"
+    },
+    "insights": {
+      "repo": "frappe/insights",
+      "ref": "v3.9.10",
+      "sha": "b28760b9955fe8fa2d0311f0e2b330d9724809ff"
+    },
+    "frappe-whatsapp": {
+      "repo": "shridarpatil/frappe_whatsapp",
+      "ref": "v1.0.11",
+      "sha": "25f340587815e1f8d0d3d99acc64fcf131079b30"
+    },
+    "offsite-backups": {
+      "repo": "frappe/offsite_backups",
+      "ref": "version-16",
+      "sha": "67c1d2416fda733e6d1c740b36a55a60bd7ef686"
+    },
+    "mint": {
+      "repo": "The-Commit-Company/mint",
+      "ref": "v1.5.3",
+      "sha": "ba30599ae8553cba3791ad163e09bf8df04053b6"
+    }
+  },
+  "staging_tag": "16-staging-20260519-3",
+  "built_at": "2026-05-19T09:26:10Z"
+}
