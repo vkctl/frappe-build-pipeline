@@ -223,6 +223,40 @@ jobs:
             -d "parse_mode=Markdown" \
             --data-urlencode "text=$MSG"
 
+      # Trigger Dokploy staging redeploy by SSHing into the deploy proxy server
+      # (which is the staging Dokploy host itself) and hitting the webhook from
+      # inside the Netbird mesh.
+      #
+      # continue-on-error: a failed deploy trigger shouldn't fail the build
+      # (the image is already pushed). We log loudly but let the workflow finish.
+      - name: Trigger Dokploy staging deploy
+        if: steps.decide.outputs.build == 'true'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DOKPLOY_SSH_HOST }}
+          username: ${{ secrets.DOKPLOY_SSH_USER }}
+          key: ${{ secrets.DOKPLOY_SSH_PRIVATE_KEY }}
+          # `script` runs on the remote server. Curl options:
+          # -sS    silent but show errors
+          # -f     fail (non-zero exit) on HTTP error codes
+          # -X POST  Dokploy webhooks expect POST
+          # --max-time 30   don't hang forever
+          script: |
+            curl -sS -f -X POST --max-time 30 "${{ secrets.DOKPLOY_STAGE_WEBHOOK_URL }}"
+
+      - name: Notify Telegram — staging deploy triggered
+        if: steps.decide.outputs.build == 'true'
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=📤 Staging deploy webhook triggered on Dokploy."
+
       - name: Notify Telegram — no changes
         if: steps.decide.outputs.build == 'false'
         continue-on-error: true

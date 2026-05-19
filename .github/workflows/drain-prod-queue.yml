@@ -158,3 +158,29 @@ jobs:
             -d "chat_id=$TG_CHAT" \
             --data-urlencode "text=🚀 Prod is live: $TAG
           $BACKUP_LINE"
+
+      # Trigger Dokploy prod redeploy. We SSH into the same proxy server used
+      # for staging deploys, then curl the prod webhook across the Netbird mesh.
+      # continue-on-error: image is already pushed; webhook failure is informational.
+      - name: Trigger Dokploy prod deploy
+        if: steps.check.outputs.pending == 'true'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DOKPLOY_SSH_HOST }}
+          username: ${{ secrets.DOKPLOY_SSH_USER }}
+          key: ${{ secrets.DOKPLOY_SSH_PRIVATE_KEY }}
+          script: |
+            curl -sS -f -X POST --max-time 30 "${{ secrets.DOKPLOY_PROD_WEBHOOK_URL }}"
+
+      - name: Notify Telegram — prod deploy triggered
+        if: steps.check.outputs.pending == 'true'
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=📤 Prod deploy webhook triggered on Dokploy."
