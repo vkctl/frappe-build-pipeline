@@ -1,0 +1,46 @@
+name: Cleanup Old Image Tags
+
+# Runs every Sunday at 02:00 IST = Saturday 20:30 UTC, 90 min after the drain.
+# This gives the drain time to finish promoting and writing state before we start
+# deleting. Also runnable manually for ad-hoc cleanup.
+on:
+  schedule:
+    - cron: '30 20 * * 6'
+  workflow_dispatch:
+    inputs:
+      keep_count:
+        description: 'How many recent unique tags to keep per env (staging/prod)'
+        required: false
+        default: '3'
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prune old image versions
+        env:
+          # The default GITHUB_TOKEN works for deleting packages owned by the
+          # same user/org that runs the workflow. If you ever move the package
+          # to a different org, swap this for a PAT with `delete:packages` scope.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          KEEP_COUNT: ${{ github.event.inputs.keep_count || '3' }}
+        run: python3 cleanup-old-tags.py
+
+      - name: Notify Telegram — cleanup done
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          KEEP: ${{ github.event.inputs.keep_count || '3' }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=🧹 GHCR cleanup done. Kept last $KEEP staging + last $KEEP prod tags (plus moving pointers)."
