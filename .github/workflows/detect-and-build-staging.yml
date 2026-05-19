@@ -7,10 +7,16 @@ on:
     - cron: '0 19 * * 5'
   workflow_dispatch:
     inputs:
-      force_build:
-        description: 'Build even if no upstream changes detected'
+      run_now:
+        description: 'Trigger off-schedule; still skips if no upstream changes'
+        required: false
+        default: 'true'
+        type: boolean
+      force_rebuild:
+        description: 'Rebuild even if nothing upstream has changed (wastes time, creates duplicate image)'
         required: false
         default: 'false'
+        type: boolean
 
 permissions:
   contents: write
@@ -28,58 +34,74 @@ jobs:
 
       # Pre-flight: is last staging build still waiting for prod promotion?
       # If yes, skip this week's run entirely and Telegram a reminder.
-      # We compare staging_tag from last-build.json against prod_tag from last-promotion.json.
-      # No last-promotion.json yet (first time ever) → skip the check, proceed normally.
-      - name: Check if previous staging was promoted
+      #
+      # This uses GHCR as the source of truth — we ask the registry for the
+      # manifest digest of :16-staging-latest and :16-prod-latest, then compare.
+      # If they match, prod points at the same image bytes as staging → caught up.
+      # If they differ, staging has a newer image that hasn't been promoted yet.
+      #
+      # Advantage over reading .state/last-*.json files: this can't lie. Even if
+      # someone manually retags via the GHCR UI, or state files get corrupted, the
+      # check still reflects reality.
+      - name: Check if previous staging was promoted (hash-based)
         id: catchup
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          STAGING_TAG=""
-          PROD_TAG=""
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-          if [ -f .state/last-build.json ]; then
-            STAGING_TAG=$(python3 -c "import json; print(json.load(open('.state/last-build.json')).get('staging_tag', ''))")
-          fi
-          if [ -f .state/last-promotion.json ]; then
-            PROD_TAG=$(python3 -c "import json; print(json.load(open('.state/last-promotion.json')).get('source_staging_tag', ''))")
-          fi
+          # Helper: fetch the manifest digest for a tag via GHCR registry API.
+          # Returns empty string if the tag doesn't exist (first build, etc).
+          # The Accept header matters: container images can have multiple manifest
+          # types, and we ask for them all so the digest header is populated.
+          get_digest() {
+            local tag="$1"
+            curl -sS -o /dev/null -D - \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/${OWNER}/frappe_stack/manifests/${tag}" \
+              | grep -i '^docker-content-digest:' \
+              | awk '{print $2}' \
+              | tr -d '\r\n'
+          }
 
-          echo "Current staging tag: ${STAGING_TAG:-<none>}"
-          echo "Last promoted staging: ${PROD_TAG:-<none>}"
+          STAGING_DIGEST=$(get_digest "16-staging-latest")
+          PROD_DIGEST=$(get_digest "16-prod-latest")
 
-          # First-time scenarios: no staging yet, or no prod yet. Both are fine.
-          if [ -z "$STAGING_TAG" ]; then
-            echo "No prior staging build. Proceeding."
+          echo "Staging digest: ${STAGING_DIGEST:-<none>}"
+          echo "Prod digest:    ${PROD_DIGEST:-<none>}"
+
+          # First-run scenarios: registry returns no digest for one or both tags.
+          if [ -z "$STAGING_DIGEST" ]; then
+            echo "No :16-staging-latest in GHCR yet. First build, proceed."
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ -z "$PROD_TAG" ]; then
-            echo "No prior prod promotion. Proceeding (first build ever or pre-promotion era)."
+          if [ -z "$PROD_DIGEST" ]; then
+            echo "No :16-prod-latest in GHCR yet. Pre-promotion era, proceed."
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Both exist — compare.
-          if [ "$STAGING_TAG" = "$PROD_TAG" ]; then
-            echo "Prod is caught up with staging. Proceeding."
+          # Both exist — compare digests.
+          if [ "$STAGING_DIGEST" = "$PROD_DIGEST" ]; then
+            echo "Prod points at the same image as staging. Caught up, proceeding."
             echo "skip=false" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Previous staging ($STAGING_TAG) was never promoted to prod (currently on $PROD_TAG). Skipping this week's run."
+            echo "::warning::Staging and prod digests differ. Skipping this week's build until prod is promoted."
             echo "skip=true" >> "$GITHUB_OUTPUT"
-
-            # Telegram the reminder, only if secrets are set.
             if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
               MSG="⚠️ Skipping this Saturday's staging build.
 
-          Previous staging ($STAGING_TAG) is still pending prod promotion. Prod is on $PROD_TAG.
-
-          Run 'Promote to Production' to clear the gap:
+          Staging is ahead of prod (different image digests). Promote staging to prod first:
           https://github.com/$REPO/actions/workflows/promote-to-prod.yml
 
-          After approval, the drain workflow will push to prod automatically Sunday 00:30 IST. Next Saturday's run can then proceed normally."
+          After approval, drain pushes to prod automatically Sunday 00:30 IST. Next Saturday's run can then proceed."
               curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
                 -d "chat_id=$TG_CHAT" \
                 --data-urlencode "text=$MSG" || true
@@ -97,11 +119,20 @@ jobs:
         id: decide
         if: steps.catchup.outputs.skip != 'true'
         run: |
-          if [ "${{ steps.check.outputs.changed }}" = "true" ] || [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+          # Build only if:
+          #   - upstream actually changed (normal path), OR
+          #   - the user explicitly asked for a no-op rebuild via force_rebuild.
+          # `run_now` is implicit — it just makes us reach this step off-schedule,
+          # but we still respect the change check unless force_rebuild is set.
+          if [ "${{ steps.check.outputs.changed }}" = "true" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Upstream changes detected. Building."
+          elif [ "${{ github.event.inputs.force_rebuild }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::force_rebuild=true. Building duplicate image despite no upstream changes."
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No upstream changes detected. Skipping build."
+            echo "::notice::No upstream changes. Skipping build (pass force_rebuild=true to override)."
           fi
 
       - name: Clone frappe_docker

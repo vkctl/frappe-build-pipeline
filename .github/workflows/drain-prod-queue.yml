@@ -107,31 +107,17 @@ jobs:
 
           echo "prod_tag=$PROD_UNIQUE_TAG" >> "$GITHUB_OUTPUT"
 
-      # Clear the pending file so next Saturday starts fresh. Also write
-      # .state/last-promotion.json — used by next Saturday's pre-flight check
-      # to verify prod caught up before allowing the next staging build.
-      - name: Archive pending promotion and record last promotion
+      # Archive the pending file (audit trail) and commit. The catchup check on
+      # the next Saturday run reads from GHCR directly, so we no longer need to
+      # write last-promotion.json — the registry is the source of truth.
+      - name: Archive pending promotion
         if: steps.check.outputs.pending == 'true'
         env:
           STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
-          PROD_TAG: ${{ steps.promote.outputs.prod_tag }}
         run: |
           mkdir -p .state/history
           DATE=$(date -u +%Y%m%d-%H%M%S)
           mv .state/pending-promotion.json ".state/history/promoted-${DATE}.json"
-
-          # Record what's now live in prod, keyed by the staging tag that produced it.
-          # Saturday's pre-flight compares this against last-build.json's staging_tag.
-          python3 -c "
-          import json
-          data = {
-              'source_staging_tag': '$STAGING_TAG',
-              'prod_tag': '$PROD_TAG',
-              'promoted_at': '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
-          }
-          json.dump(data, open('.state/last-promotion.json', 'w'), indent=2)
-          open('.state/last-promotion.json', 'a').write('\n')
-          "
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
