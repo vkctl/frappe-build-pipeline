@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Prune old GHCR image versions for the 'custom' package, keeping only the most
+Prune old GHCR image versions for the 'frappe_stack' package, keeping only the most
 recent N unique tags per environment (staging / prod), plus always preserving
 moving pointers.
 
@@ -14,7 +14,7 @@ Why this exists instead of using actions/delete-package-versions:
     needed, keep the underlying image alive."
 
 How this works:
-  1. List all versions of the 'custom' package via GitHub API.
+  1. List all versions of the 'frappe_stack' package via GitHub API.
   2. For each version, look at its tags.
   3. Decide what to do with each tag:
      - Moving pointers (16-staging-latest, 16-prod-latest, 16-prod-backup): keep.
@@ -43,7 +43,7 @@ import urllib.error
 import urllib.parse
 
 API_ROOT = "https://api.github.com"
-PACKAGE_NAME = "custom"
+PACKAGE_NAME = "frappe_stack"
 KEEP_COUNT = int(os.environ.get("KEEP_COUNT", "3"))
 TOKEN = os.environ["GITHUB_TOKEN"]
 OWNER = os.environ["GITHUB_REPOSITORY_OWNER"].lower()

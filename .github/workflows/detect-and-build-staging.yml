@@ -133,8 +133,8 @@ jobs:
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           DATE=$(date -u +%Y%m%d)
           UNIQUE="16-staging-${DATE}-${{ github.run_number }}"
-          echo "unique_tag=ghcr.io/${OWNER}/custom:${UNIQUE}" >> "$GITHUB_OUTPUT"
-          echo "latest_tag=ghcr.io/${OWNER}/custom:16-staging-latest" >> "$GITHUB_OUTPUT"
+          echo "unique_tag=ghcr.io/${OWNER}/frappe_stack:${UNIQUE}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=ghcr.io/${OWNER}/frappe_stack:16-staging-latest" >> "$GITHUB_OUTPUT"
           echo "unique_only=${UNIQUE}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx

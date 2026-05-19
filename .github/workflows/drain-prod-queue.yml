@@ -62,8 +62,8 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
         run: |
           OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
-          CURRENT_PROD="ghcr.io/${OWNER}/custom:16-prod-latest"
-          BACKUP_TAG="ghcr.io/${OWNER}/custom:16-prod-backup"
+          CURRENT_PROD="ghcr.io/${OWNER}/frappe_stack:16-prod-latest"
+          BACKUP_TAG="ghcr.io/${OWNER}/frappe_stack:16-prod-backup"
 
           echo "Attempting to back up current prod ($CURRENT_PROD)..."
           if docker pull "$CURRENT_PROD" 2>/dev/null; then
@@ -91,10 +91,10 @@ jobs:
           STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          STAGING_FULL="ghcr.io/${OWNER}/custom:${STAGING_TAG}"
+          STAGING_FULL="ghcr.io/${OWNER}/frappe_stack:${STAGING_TAG}"
           # Replace "staging" -> "prod" in the tag name to keep the date/run-number traceable.
-          PROD_UNIQUE_TAG="ghcr.io/${OWNER}/custom:${STAGING_TAG/staging/prod}"
-          PROD_LATEST_TAG="ghcr.io/${OWNER}/custom:16-prod-latest"
+          PROD_UNIQUE_TAG="ghcr.io/${OWNER}/frappe_stack:${STAGING_TAG/staging/prod}"
+          PROD_LATEST_TAG="ghcr.io/${OWNER}/frappe_stack:16-prod-latest"
 
           echo "Pulling $STAGING_FULL"
           docker pull "$STAGING_FULL"
