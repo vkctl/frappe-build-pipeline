@@ -1,0 +1,5 @@
+{
+  "source_staging_tag": "16-staging-20260519-3",
+  "prod_tag": "ghcr.io/orey-aajaamu/frappe_stack:16-prod-20260519-3",
+  "promoted_at": "2026-05-19T09:40:42Z"
+}
