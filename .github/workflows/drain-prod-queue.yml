@@ -1,0 +1,142 @@
+name: Drain Prod Queue
+
+# Runs every Sunday at 00:30 IST = Saturday 19:00 UTC.
+# day-of-week 6 = Saturday UTC, which is Sunday 00:30 IST.
+# If there's a pending promotion (you approved on Saturday), it pushes to prod.
+# If nothing's pending, it exits quietly with no notification.
+on:
+  schedule:
+    - cron: '0 19 * * 6'
+  workflow_dispatch:   # also allow manual run, useful for testing
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Check whether there's anything to promote. If not, exit cleanly.
+      # We set an output so later steps can skip themselves.
+      - name: Check for pending promotion
+        id: check
+        run: |
+          if [ ! -f .state/pending-promotion.json ]; then
+            echo "No pending promotion. Nothing to do."
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['staging_tag'])")
+          APPROVED_BY=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['approved_by'])")
+          echo "Found pending promotion: $TAG (approved by $APPROVED_BY)"
+          echo "pending=true" >> "$GITHUB_OUTPUT"
+          echo "staging_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.pending == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.check.outputs.pending == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Back up the CURRENT prod image before overwriting it.
+      # Pulls :16-prod-latest, retags as :16-prod-backup, pushes.
+      # If :16-prod-latest doesn't exist yet (very first promotion ever),
+      # the pull fails — we catch that and continue, since there's nothing to back up.
+      # Also captures the unique tag of what was backed up, so we can tell you in Telegram.
+      - name: Back up current prod image
+        if: steps.check.outputs.pending == 'true'
+        id: backup
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+          CURRENT_PROD="ghcr.io/${OWNER}/custom:16-prod-latest"
+          BACKUP_TAG="ghcr.io/${OWNER}/custom:16-prod-backup"
+
+          echo "Attempting to back up current prod ($CURRENT_PROD)..."
+          if docker pull "$CURRENT_PROD" 2>/dev/null; then
+            # Get the unique tag this image originally had, via the org.opencontainers label
+            # we'd ideally set at build time. For now, just record the digest for traceability.
+            DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$CURRENT_PROD" 2>/dev/null || echo "unknown")
+            echo "Current prod digest: $DIGEST"
+
+            docker tag "$CURRENT_PROD" "$BACKUP_TAG"
+            docker push "$BACKUP_TAG"
+            echo "Backup pushed: $BACKUP_TAG"
+            echo "backed_up=true" >> "$GITHUB_OUTPUT"
+            echo "backup_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing :16-prod-latest found (first promotion?). Nothing to back up."
+            echo "backed_up=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The actual promotion: pull the staging image, retag as prod, push.
+      # No rebuild — same exact image bytes you tested on Saturday.
+      - name: Promote staging image to prod
+        if: steps.check.outputs.pending == 'true'
+        id: promote
+        env:
+          STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          STAGING_FULL="ghcr.io/${OWNER}/custom:${STAGING_TAG}"
+          # Replace "staging" -> "prod" in the tag name to keep the date/run-number traceable.
+          PROD_UNIQUE_TAG="ghcr.io/${OWNER}/custom:${STAGING_TAG/staging/prod}"
+          PROD_LATEST_TAG="ghcr.io/${OWNER}/custom:16-prod-latest"
+
+          echo "Pulling $STAGING_FULL"
+          docker pull "$STAGING_FULL"
+
+          docker tag "$STAGING_FULL" "$PROD_UNIQUE_TAG"
+          docker push "$PROD_UNIQUE_TAG"
+
+          docker tag "$STAGING_FULL" "$PROD_LATEST_TAG"
+          docker push "$PROD_LATEST_TAG"
+
+          echo "prod_tag=$PROD_UNIQUE_TAG" >> "$GITHUB_OUTPUT"
+
+      # Clear the pending file so next Saturday starts fresh. Move it to a history
+      # file instead of deleting, so we have an audit trail of past promotions.
+      - name: Archive pending promotion
+        if: steps.check.outputs.pending == 'true'
+        run: |
+          mkdir -p .state/history
+          DATE=$(date -u +%Y%m%d-%H%M%S)
+          mv .state/pending-promotion.json ".state/history/promoted-${DATE}.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/
+          git commit -m "Promoted to prod: ${{ steps.check.outputs.staging_tag }}"
+          git push
+
+      - name: Notify Telegram — prod live
+        if: steps.check.outputs.pending == 'true'
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TAG: ${{ steps.promote.outputs.prod_tag }}
+          BACKED_UP: ${{ steps.backup.outputs.backed_up }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          if [ "$BACKED_UP" = "true" ]; then
+            BACKUP_LINE="Previous prod saved as :16-prod-backup (rollback available)."
+          else
+            BACKUP_LINE="No previous prod to back up (first promotion)."
+          fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=🚀 Prod is live: $TAG
+          $BACKUP_LINE"

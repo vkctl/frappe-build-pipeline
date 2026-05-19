@@ -1,0 +1,45 @@
+{
+  "apps": [
+    {
+      "name": "erpnext",
+      "repo": "frappe/erpnext",
+      "track": "tag",
+      "tag_prefix": "v16",
+      "_comment": "Matches v16.x.x tags only, ignores v15 etc."
+    },
+    {
+      "name": "hrms",
+      "repo": "frappe/hrms",
+      "track": "tag",
+      "tag_prefix": "v16"
+    },
+    {
+      "name": "india-compliance",
+      "repo": "resilient-tech/india-compliance",
+      "track": "tag",
+      "tag_prefix": "v16"
+    },
+    {
+      "name": "insights",
+      "repo": "frappe/insights",
+      "track": "latest_tag",
+      "_comment": "Use whatever the newest tag is, regardless of prefix"
+    },
+    {
+      "name": "frappe-whatsapp",
+      "repo": "shridarpatil/frappe_whatsapp",
+      "track": "latest_tag"
+    },
+    {
+      "name": "offsite_backups",
+      "repo": "frappe/offsite_backups",
+      "track": "branch",
+      "branch": "version-16"
+    },
+    {
+      "name": "mint",
+      "repo": "The-Commit-Company/mint",
+      "track": "latest_tag"
+    }
+  ]
+}

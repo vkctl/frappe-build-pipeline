@@ -1,0 +1,167 @@
+name: Detect & Build Staging
+
+# Runs every Saturday at 00:30 IST = Friday 19:00 UTC.
+# Cron is in UTC. day-of-week 5 = Friday UTC, which is Saturday 00:30 IST.
+on:
+  schedule:
+    - cron: '0 19 * * 5'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Build even if no upstream changes detected'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  detect-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check upstream apps for changes
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 check-upstream.py
+
+      - name: Decide whether to build
+        id: decide
+        run: |
+          if [ "${{ steps.check.outputs.changed }}" = "true" ] || [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No upstream changes detected. Skipping build."
+          fi
+
+      - name: Clone frappe_docker
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: frappe/frappe_docker
+          ref: main
+          path: frappe_docker
+
+      - name: Write apps.json
+        if: steps.decide.outputs.build == 'true'
+        working-directory: frappe_docker
+        env:
+          APPS_JSON: ${{ secrets.APPS_JSON }}
+        run: echo "$APPS_JSON" > apps.json
+
+      - name: Compute tags
+        if: steps.decide.outputs.build == 'true'
+        id: tags
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          DATE=$(date -u +%Y%m%d)
+          UNIQUE="16-staging-${DATE}-${{ github.run_number }}"
+          echo "unique_tag=ghcr.io/${OWNER}/custom:${UNIQUE}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=ghcr.io/${OWNER}/custom:16-staging-latest" >> "$GITHUB_OUTPUT"
+          echo "unique_only=${UNIQUE}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push staging image
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: frappe_docker
+          file: frappe_docker/images/layered/Containerfile
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.unique_tag }}
+            ${{ steps.tags.outputs.latest_tag }}
+          build-args: |
+            FRAPPE_PATH=https://github.com/frappe/frappe
+            FRAPPE_BRANCH=version-16
+          secrets: |
+            "apps_json=${{ secrets.APPS_JSON }}"
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update state file
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          python3 -c "
+          import json
+          data = json.load(open('.state/current-versions.json'))
+          data['staging_tag'] = '${{ steps.tags.outputs.unique_only }}'
+          data['built_at'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+          json.dump(data, open('.state/last-build.json', 'w'), indent=2)
+          open('.state/last-build.json', 'a').write('\n')
+          "
+
+      - name: Commit state update
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/last-build.json
+          git diff --staged --quiet || git commit -m "Update build state: ${{ steps.tags.outputs.unique_only }}"
+          git push
+
+      - name: Notify Telegram — build complete
+        if: steps.decide.outputs.build == 'true'
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SUMMARY: ${{ steps.check.outputs.summary }}
+          TAG: ${{ steps.tags.outputs.unique_only }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+            echo "Telegram secrets not set, skipping notification."
+            exit 0
+          fi
+          MSG=$(cat <<EOF
+          *Staging build complete (Saturday weekly)*
+
+          Image: \`$TAG\`
+
+          Changes:
+          \`\`\`
+          $SUMMARY
+          \`\`\`
+
+          You have all of Saturday to test. Approve prod at:
+          https://github.com/$REPO/actions/workflows/promote-to-prod.yml
+
+          Prod will auto-push Sunday 00:30 IST after approval.
+          EOF
+          )
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            -d "parse_mode=Markdown" \
+            --data-urlencode "text=$MSG"
+
+      - name: Notify Telegram — no changes
+        if: steps.decide.outputs.build == 'false'
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=Saturday check: no upstream changes. No build this week."

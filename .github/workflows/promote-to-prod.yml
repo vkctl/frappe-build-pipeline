@@ -1,0 +1,69 @@
+name: Promote to Production (queue for Sunday push)
+
+# Manual trigger. You click "Run workflow" Saturday after testing the staging build.
+# This workflow does NOT push to prod directly — it queues the promotion by writing
+# a pending-promotion file. The actual push happens via the drain workflow on Sunday 00:30 IST.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # we commit .state/pending-promotion.json
+  packages: read
+
+jobs:
+  approve-and-queue:
+    runs-on: ubuntu-latest
+    # The `production` environment is the GitHub approval gate.
+    # Workflow pauses here until you approve in the GitHub UI / mobile app.
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read latest staging tag
+        id: read
+        run: |
+          if [ ! -f .state/last-build.json ]; then
+            echo "::error::No .state/last-build.json found. Has staging ever been built?"
+            exit 1
+          fi
+          TAG=$(python3 -c "import json; print(json.load(open('.state/last-build.json'))['staging_tag'])")
+          echo "Queuing promotion of: $TAG"
+          echo "staging_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Write the pending-promotion file. The drain workflow reads this on Sunday.
+      # We capture the tag AT APPROVAL TIME — if staging somehow rebuilds before the drain
+      # runs (it won't on this schedule, but defense in depth), the drain still promotes
+      # the tag you actually approved.
+      - name: Write pending promotion
+        run: |
+          mkdir -p .state
+          cat > .state/pending-promotion.json <<EOF
+          {
+            "staging_tag": "${{ steps.read.outputs.staging_tag }}",
+            "approved_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "approved_by": "${{ github.actor }}"
+          }
+          EOF
+
+      - name: Commit pending promotion
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/pending-promotion.json
+          git diff --staged --quiet || git commit -m "Queue prod promotion: ${{ steps.read.outputs.staging_tag }}"
+          git push
+
+      - name: Notify Telegram — queued
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TAG: ${{ steps.read.outputs.staging_tag }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=✅ Prod promotion queued: $TAG. Will push automatically on Sunday 00:30 IST."
