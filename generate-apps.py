@@ -14,10 +14,14 @@ Inputs:
 Output:
   - apps.json (overwrites/creates; Frappe array-of-objects format)
 
-Each app's `branch` field in the output is the ref the detector resolved:
-  - tag-tracked app:    "branch": "v16.18.3"
-  - latest-tag app:     "branch": "v3.9.10"
-  - branch-tracked app: "branch": "version-16"
+The `branch` field in the output depends on each app's tracking mode:
+  - tag-tracked app (track=tag):         "branch": "v16.18.3"  (the tag name)
+  - latest-tag app (track=latest_tag):   "branch": "v3.9.10"   (the tag name)
+  - branch-tracked app (track=branch):   "branch": "2807c9f0..." (the resolved SHA)
+
+Tags are pinned by name because they're already immutable in git. Branches are
+pinned by SHA because branch HEAD can move between detection and clone — using
+the SHA guarantees we install the exact commit we recorded.
 """
 
 import json
@@ -56,12 +60,26 @@ def main() -> None:
                   file=sys.stderr)
             sys.exit(1)
 
-        ref = versions[name]['ref']
+        # Choose what to put in the `branch` field per tracking mode:
+        #   - branch-tracked apps: pin to the exact SHA detected. This avoids
+        #     races where new commits land between detection and clone, and
+        #     makes the build reproducible.
+        #   - tag-tracked apps (tag or latest_tag): use the tag name itself.
+        #     Tags are immutable in git, so this is already reproducible, and
+        #     it keeps the build traceable to a human-readable version.
+        track = app.get('track')
+        if track == 'branch':
+            install_ref = versions[name]['sha']
+            display = f"{versions[name]['ref']} @ {install_ref[:7]}"
+        else:
+            install_ref = versions[name]['ref']
+            display = install_ref
+
         output.append({
             "url": app['url'],
-            "branch": ref,
+            "branch": install_ref,
         })
-        print(f"  {name}: {ref}")
+        print(f"  {name}: {display}")
 
     output_path.write_text(json.dumps(output, indent=2) + '\n')
     print(f"\nWrote {output_path} with {len(output)} apps.")
