@@ -26,14 +26,76 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Pre-flight: is last staging build still waiting for prod promotion?
+      # If yes, skip this week's run entirely and Telegram a reminder.
+      # We compare staging_tag from last-build.json against prod_tag from last-promotion.json.
+      # No last-promotion.json yet (first time ever) → skip the check, proceed normally.
+      - name: Check if previous staging was promoted
+        id: catchup
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPO: ${{ github.repository }}
+        run: |
+          STAGING_TAG=""
+          PROD_TAG=""
+
+          if [ -f .state/last-build.json ]; then
+            STAGING_TAG=$(python3 -c "import json; print(json.load(open('.state/last-build.json')).get('staging_tag', ''))")
+          fi
+          if [ -f .state/last-promotion.json ]; then
+            PROD_TAG=$(python3 -c "import json; print(json.load(open('.state/last-promotion.json')).get('source_staging_tag', ''))")
+          fi
+
+          echo "Current staging tag: ${STAGING_TAG:-<none>}"
+          echo "Last promoted staging: ${PROD_TAG:-<none>}"
+
+          # First-time scenarios: no staging yet, or no prod yet. Both are fine.
+          if [ -z "$STAGING_TAG" ]; then
+            echo "No prior staging build. Proceeding."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$PROD_TAG" ]; then
+            echo "No prior prod promotion. Proceeding (first build ever or pre-promotion era)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Both exist — compare.
+          if [ "$STAGING_TAG" = "$PROD_TAG" ]; then
+            echo "Prod is caught up with staging. Proceeding."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Previous staging ($STAGING_TAG) was never promoted to prod (currently on $PROD_TAG). Skipping this week's run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+
+            # Telegram the reminder, only if secrets are set.
+            if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+              MSG="⚠️ Skipping this Saturday's staging build.
+
+          Previous staging ($STAGING_TAG) is still pending prod promotion. Prod is on $PROD_TAG.
+
+          Run 'Promote to Production' to clear the gap:
+          https://github.com/$REPO/actions/workflows/promote-to-prod.yml
+
+          After approval, the drain workflow will push to prod automatically Sunday 00:30 IST. Next Saturday's run can then proceed normally."
+              curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+                -d "chat_id=$TG_CHAT" \
+                --data-urlencode "text=$MSG" || true
+            fi
+          fi
+
       - name: Check upstream apps for changes
         id: check
+        if: steps.catchup.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 check-upstream.py
 
       - name: Decide whether to build
         id: decide
+        if: steps.catchup.outputs.skip != 'true'
         run: |
           if [ "${{ steps.check.outputs.changed }}" = "true" ] || [ "${{ github.event.inputs.force_build }}" = "true" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
@@ -150,10 +212,10 @@ jobs:
           $SUMMARY
           \`\`\`
 
-          You have all of Saturday to test. Approve prod at:
+          When you're ready to push to prod, run the workflow manually:
           https://github.com/$REPO/actions/workflows/promote-to-prod.yml
 
-          Prod will auto-push Sunday 00:30 IST after approval.
+          After approval, prod auto-pushes Sunday 00:30 IST. If you don't run it this week, next Saturday's build will be blocked with a reminder until you do.
           EOF
           )
           curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
