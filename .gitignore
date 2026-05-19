@@ -1,0 +1,19 @@
+# Runtime-generated files (these live on the runner only)
+apps.json
+.state/current-versions.json
+
+# Local testing artifacts
+frappe_docker/
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor junk
+.vscode/
+.idea/
+*.swp

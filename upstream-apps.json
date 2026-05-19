@@ -2,6 +2,7 @@
   "apps": [
     {
       "name": "erpnext",
+      "url": "https://github.com/frappe/erpnext",
       "repo": "frappe/erpnext",
       "track": "tag",
       "tag_prefix": "v16",
@@ -9,35 +10,41 @@
     },
     {
       "name": "hrms",
+      "url": "https://github.com/frappe/hrms",
       "repo": "frappe/hrms",
       "track": "tag",
       "tag_prefix": "v16"
     },
     {
       "name": "india-compliance",
+      "url": "https://github.com/resilient-tech/india-compliance",
       "repo": "resilient-tech/india-compliance",
       "track": "tag",
       "tag_prefix": "v16"
     },
     {
       "name": "insights",
+      "url": "https://github.com/frappe/insights",
       "repo": "frappe/insights",
       "track": "latest_tag",
       "_comment": "Use whatever the newest tag is, regardless of prefix"
     },
     {
       "name": "frappe-whatsapp",
+      "url": "https://github.com/shridarpatil/frappe_whatsapp",
       "repo": "shridarpatil/frappe_whatsapp",
       "track": "latest_tag"
     },
     {
-      "name": "offsite_backups",
+      "name": "offsite-backups",
+      "url": "https://github.com/frappe/offsite_backups",
       "repo": "frappe/offsite_backups",
       "track": "branch",
       "branch": "version-16"
     },
     {
       "name": "mint",
+      "url": "https://github.com/The-Commit-Company/mint",
       "repo": "The-Commit-Company/mint",
       "track": "latest_tag"
     }

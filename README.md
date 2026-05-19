@@ -32,9 +32,10 @@ your-repo/
 
 ### 1. Secrets (Settings → Secrets and variables → Actions)
 
-- **`APPS_JSON`** — full contents of your `apps.json`.
 - **`TELEGRAM_BOT_TOKEN`** — from [@BotFather](https://t.me/BotFather): `/newbot`, copy the token.
 - **`TELEGRAM_CHAT_ID`** — message your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` — your chat ID is in the response.
+
+That's it for secrets. The app list lives in `upstream-apps.json` in the repo (single source of truth).
 
 ### 2. Workflow permissions
 
@@ -99,7 +100,7 @@ For older rollbacks (more than one week back), use the immutable `16-prod-YYYYMM
 
 **First run.** No `.state/last-build.json` yet, so everything counts as new. Staging builds normally.
 
-**Editing watched apps.** Edit `upstream-apps.json`, commit, push. Next Saturday's run uses the new config. If you remove an app, also remove it from `apps.json` (the build secret).
+**Editing watched apps.** Edit `upstream-apps.json`, commit, push. Next Saturday's run uses the new config. That's the only place apps are listed — add the full entry (name, url, repo, track) for new apps, or remove the block to remove apps.
 
 ## Costs
 

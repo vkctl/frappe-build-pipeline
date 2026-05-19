@@ -50,12 +50,19 @@ jobs:
           ref: main
           path: frappe_docker
 
-      - name: Write apps.json
+      - name: Generate apps.json from upstream-apps.json
         if: steps.decide.outputs.build == 'true'
         working-directory: frappe_docker
-        env:
-          APPS_JSON: ${{ secrets.APPS_JSON }}
-        run: echo "$APPS_JSON" > apps.json
+        run: |
+          # The detector wrote .state/current-versions.json at the repo root.
+          # Copy it (and the config) into frappe_docker/ so the generator finds them.
+          mkdir -p .state
+          cp ../.state/current-versions.json .state/current-versions.json
+          cp ../upstream-apps.json upstream-apps.json
+          python3 ../generate-apps.py
+          echo "---"
+          echo "Generated apps.json:"
+          cat apps.json
 
       - name: Compute tags
         if: steps.decide.outputs.build == 'true'
@@ -93,8 +100,8 @@ jobs:
           build-args: |
             FRAPPE_PATH=https://github.com/frappe/frappe
             FRAPPE_BRANCH=version-16
-          secrets: |
-            "apps_json=${{ secrets.APPS_JSON }}"
+          secret-files: |
+            "apps_json=frappe_docker/apps.json"
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
