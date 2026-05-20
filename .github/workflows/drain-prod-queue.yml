@@ -50,13 +50,51 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Skip the promotion if the pending staging tag already matches prod.
+      # This guards against a drain run where prod was somehow already updated
+      # (e.g., previous drain partially succeeded), preventing a redundant
+      # pull/retag/push cycle and a spurious Dokploy redeploy.
+      - name: Check if staging already matches prod
+        if: steps.check.outputs.pending == 'true'
+        id: digest_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
+          get_digest() {
+            curl -sS -o /dev/null -D - \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/${OWNER}/frappe_stack/manifests/$1" \
+              | grep -i '^docker-content-digest:' \
+              | awk '{print $2}' \
+              | tr -d '\r\n'
+          }
+
+          STAGING_DIGEST=$(get_digest "$STAGING_TAG")
+          PROD_DIGEST=$(get_digest "16-prod-latest")
+
+          echo "Staging tag digest: ${STAGING_DIGEST:-<none>}"
+          echo "Prod digest:        ${PROD_DIGEST:-<none>}"
+
+          if [ -n "$PROD_DIGEST" ] && [ "$STAGING_DIGEST" = "$PROD_DIGEST" ]; then
+            echo "Already promoted. Skipping redundant push."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Back up the CURRENT prod image before overwriting it.
       # Pulls :16-prod-latest, retags as :16-prod-backup, pushes.
       # If :16-prod-latest doesn't exist yet (very first promotion ever),
       # the pull fails — we catch that and continue, since there's nothing to back up.
       # Also captures the unique tag of what was backed up, so we can tell you in Telegram.
       - name: Back up current prod image
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         id: backup
         env:
           REPO_OWNER: ${{ github.repository_owner }}
@@ -85,7 +123,7 @@ jobs:
       # The actual promotion: pull the staging image, retag as prod, push.
       # No rebuild — same exact image bytes you tested on Saturday.
       - name: Promote staging image to prod
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         id: promote
         env:
           STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
@@ -114,6 +152,7 @@ jobs:
         if: steps.check.outputs.pending == 'true'
         env:
           STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
+          SKIPPED: ${{ steps.digest_check.outputs.skip }}
         run: |
           mkdir -p .state/history
           DATE=$(date -u +%Y%m%d-%H%M%S)
@@ -122,11 +161,28 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .state/
-          git commit -m "Promoted to prod: $STAGING_TAG"
+          if [ "$SKIPPED" = "true" ]; then
+            git commit -m "Skip promotion (already in prod): $STAGING_TAG"
+          else
+            git commit -m "Promoted to prod: $STAGING_TAG"
+          fi
           git push
 
+      - name: Notify Telegram — already up to date
+        if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip == 'true'
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TAG: ${{ steps.check.outputs.staging_tag }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=ℹ️ Drain skipped: $TAG is already the current prod image. No push needed."
+
       - name: Notify Telegram — prod live
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         continue-on-error: true
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -149,7 +205,7 @@ jobs:
       # for staging deploys, then curl the prod webhook across the Netbird mesh.
       # continue-on-error: image is already pushed; webhook failure is informational.
       - name: Trigger Dokploy prod deploy
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -160,7 +216,7 @@ jobs:
             curl -sS -f -X POST --max-time 30 "${{ secrets.DOKPLOY_PROD_WEBHOOK_URL }}"
 
       - name: Notify Telegram — prod deploy triggered
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         continue-on-error: true
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
