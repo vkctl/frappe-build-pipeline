@@ -2,7 +2,7 @@
 """
 Prune old GHCR image versions for the 'frappe_stack' package.
 
-Train model: one pool of build images tagged 16-build-YYYYMMDD-N, with three
+Rolling window: one pool of build images tagged 16-build-YYYYMMDD-N, with three
 moving pointer tags (16-staging-latest, 16-prod-latest, 16-prod-backup) that
 point into that pool. We keep the last KEEP_COUNT builds and always protect any
 build currently referenced by a pointer tag.

@@ -65,7 +65,7 @@ GitHub Actions caps jobs at 6 hours. If you approve Saturday morning, the Sunday
 
 The pending file is the queue. The cron is the clock.
 
-## The train model — how images are managed
+## Rolling window — how images are managed
 
 There is one pool of immutable build images and three moving pointer tags:
 
