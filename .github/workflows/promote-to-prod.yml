@@ -29,7 +29,7 @@ jobs:
             echo "::error::No .state/last-build.json found. Has staging ever been built?"
             exit 1
           fi
-          TAG=$(python3 -c "import json; print(json.load(open('.state/last-build.json'))['build_tag'])")
+          TAG=$(python3 -c "import json; d=json.load(open('.state/last-build.json')); print(d.get('build_tag') or d['staging_tag'])")
           echo "Queuing promotion of: $TAG"
           echo "build_tag=$TAG" >> "$GITHUB_OUTPUT"
 

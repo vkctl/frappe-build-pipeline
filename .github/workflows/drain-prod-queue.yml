@@ -32,7 +32,7 @@ jobs:
             echo "pending=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          TAG=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['build_tag'])")
+          TAG=$(python3 -c "import json; d=json.load(open('.state/pending-promotion.json')); print(d.get('build_tag') or d['staging_tag'])")
           APPROVED_BY=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['approved_by'])")
           echo "Found pending promotion: $TAG (approved by $APPROVED_BY)"
           echo "pending=true" >> "$GITHUB_OUTPUT"
