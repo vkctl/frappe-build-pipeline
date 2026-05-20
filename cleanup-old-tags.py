@@ -22,7 +22,7 @@ import urllib.error
 
 API_ROOT = "https://api.github.com"
 PACKAGE_NAME = "frappe_stack"
-KEEP_COUNT = int(os.environ.get("KEEP_COUNT", "3"))
+KEEP_COUNT = int(os.environ.get("KEEP_COUNT", "4"))
 TOKEN = os.environ["GITHUB_TOKEN"]
 OWNER = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
 
