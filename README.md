@@ -4,11 +4,12 @@
 
 | When (IST) | What happens |
 |---|---|
-| **Sat 00:30** | Auto-check upstream repos. If anything changed, build staging image. Telegram you. |
-| **Sat anytime** | You test staging at your leisure. When ready, click "Run workflow" on **Promote to Production** and approve in the GitHub mobile app. |
-| **Sun 00:30** | Auto-drain: if you approved, prod gets the image you tested. No build, just a retag+push. |
+| **Sat 00:30** | Auto-check upstream repos. If anything changed, build a new image (`16-build-DATE-N`), point `16-staging-latest` at it, deploy to staging, Telegram you. |
+| **Sat anytime** | You test staging. When ready, click **Run workflow** on **Promote to Production** and approve in the GitHub mobile app. Workflow checks staging ≠ prod (skips if already same), writes `.state/pending-promotion.json`. |
+| **Sun 00:30** | Auto-drain: if approved, move `16-prod-backup` → current prod, move `16-prod-latest` → the approved build image. No image data copied — pure registry pointer updates. |
+| **Sun 02:00** | Auto-cleanup: delete old `16-build-*` images beyond the last 3, protecting anything currently referenced by a pointer tag. |
 
-If you don't approve on Saturday, Sunday's drain finds nothing pending and exits quietly. The staging image stays around in GHCR; you can approve a future Saturday to promote it then. The next Saturday build (if upstream changes again) overwrites what's "latest" in staging.
+If you don't approve on Saturday, Sunday's drain finds nothing pending and exits silently. The next Saturday build overwrites `16-staging-latest` if upstream changed.
 
 ## File layout
 
@@ -16,15 +17,18 @@ If you don't approve on Saturday, Sunday's drain finds nothing pending and exits
 your-repo/
 ├── .github/
 │   └── workflows/
-│       ├── detect-and-build-staging.yml
-│       ├── promote-to-prod.yml
-│       └── drain-prod-queue.yml
+│       ├── detect-and-build-staging.yml   # Saturday build
+│       ├── promote-to-prod.yml            # Manual approval + queue
+│       ├── drain-prod-queue.yml           # Sunday pointer move
+│       └── cleanup-old-tags.yml           # Sunday image pruning
 ├── .state/
-│   ├── last-build.json          (auto-created)
-│   ├── pending-promotion.json   (auto-created when you approve, deleted after drain)
-│   └── history/                 (audit trail of past promotions)
+│   ├── last-build.json                    (auto-created after each build)
+│   ├── pending-promotion.json             (created on approval, deleted after drain)
+│   └── history/                           (audit trail of past promotions)
 ├── upstream-apps.json
 ├── check-upstream.py
+├── generate-apps.py
+├── cleanup-old-tags.py
 └── README.md
 ```
 
@@ -34,8 +38,8 @@ your-repo/
 
 - **`TELEGRAM_BOT_TOKEN`** — from [@BotFather](https://t.me/BotFather): `/newbot`, copy the token.
 - **`TELEGRAM_CHAT_ID`** — message your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` — your chat ID is in the response.
-
-That's it for secrets. The app list lives in `upstream-apps.json` in the repo (single source of truth).
+- **`DOKPLOY_SSH_HOST`**, **`DOKPLOY_SSH_USER`**, **`DOKPLOY_SSH_PRIVATE_KEY`** — SSH access to your deploy proxy.
+- **`DOKPLOY_STAGE_WEBHOOK_URL`**, **`DOKPLOY_PROD_WEBHOOK_URL`** — Dokploy redeploy webhook URLs.
 
 ### 2. Workflow permissions
 
@@ -46,62 +50,74 @@ Settings → Actions → General → Workflow permissions → **Read and write p
 Settings → Environments → **New environment** → name it exactly `production`. Inside:
 - Enable **Required reviewers** → add yourself.
 
-This is what makes the Promote workflow pause until you approve.
+This is what makes the Promote workflow pause until you approve in the GitHub UI or mobile app.
 
 ### 4. Verify `upstream-apps.json`
 
-The repo paths in this file are best-guesses. Verify each `repo:` field matches the actual GitHub URL of the app you use.
+Check each `repo:` field matches the actual GitHub repository of the app you use.
 
 ## Why the "drain pattern" instead of `sleep`
 
-GitHub Actions caps jobs at 6 hours. If you approve Saturday morning, the Sunday 00:30 IST push is 16+ hours away — way over the limit. So the system splits approval from execution:
+GitHub Actions caps jobs at 6 hours. If you approve Saturday morning, the Sunday 00:30 IST push is 16+ hours away. So the system splits approval from execution:
 
-1. **Promote workflow** (Saturday, after you approve) just writes `.state/pending-promotion.json` and exits in ~5 seconds.
-2. **Drain workflow** (Sunday 00:30 IST, scheduled) reads that file and does the push.
+1. **Promote workflow** (Saturday, after you approve) just writes `.state/pending-promotion.json` and exits in seconds.
+2. **Drain workflow** (Sunday 00:30 IST, scheduled) reads that file and moves the prod pointer.
 
 The pending file is the queue. The cron is the clock.
 
+## The train model — how images are managed
+
+There is one pool of immutable build images and three moving pointer tags:
+
+| Tag | What it is |
+|---|---|
+| `16-build-YYYYMMDD-N` | Immutable build image (one per Saturday build). Never overwritten. |
+| `16-staging-latest` | Pointer → most recent build. Moves every Saturday. |
+| `16-prod-latest` | Pointer → currently live prod build. Moves every Sunday after approval. |
+| `16-prod-backup` | Pointer → the build that was in prod just before the current one. Free rollback. |
+
+On promotion, no image data is copied. The drain workflow simply moves `16-prod-backup` to where `16-prod-latest` currently points, then moves `16-prod-latest` to the approved build. Both are pure registry metadata operations (milliseconds, no layer transfer).
+
+Cleanup keeps the last 3 build images. Any build currently referenced by `16-staging-latest`, `16-prod-latest`, or `16-prod-backup` is always protected regardless of age.
+
+## Efficiency safeguards
+
+**Hash-based catchup check (Saturday build):** Before building, the staging workflow compares the GHCR manifest digest of `16-staging-latest` vs `16-prod-latest`. If they match (prod already has the latest staging image), it skips the build and reminds you to promote first.
+
+**Duplicate promotion skip (Promote + Drain):** Both the promote and drain workflows compare digests before doing any work. If staging and prod already point at the same image, they skip and send a Telegram notification instead of doing a no-op promotion.
+
 ## Queue correctness scenarios
 
-- **Approve Sat morning → Sun 00:30 drain pushes the image you approved.** ✓
-- **Approve Sat morning, change your mind → manually delete `.state/pending-promotion.json` (just edit it out via the GitHub web UI and commit). Sunday's drain finds nothing pending, exits.** ✓
-- **Approve twice on Saturday → second approval overwrites the pending file. Sunday's drain promotes the latest. (Both approvals are for the same staging image anyway, since staging only builds Saturday, so this is harmless.)** ✓
-- **Don't approve → Sunday's drain exits silently. Image stays in staging. Next Saturday either rebuilds (upstream changed) or doesn't (nothing new). You can approve next Sat to push current staging.** ✓
-
-## The tags you'll have in GHCR
-
-| Tag | What it points to |
-|---|---|
-| `16-staging-latest` | Most recent staging build (moves every Saturday) |
-| `16-staging-YYYYMMDD-N` | Specific staging build (immutable, never overwritten) |
-| `16-prod-latest` | Currently live prod (moves every Sunday after a successful promotion) |
-| `16-prod-YYYYMMDD-N` | Specific prod release (immutable) |
-| `16-prod-backup` | The prod image that was live just before the current one (auto-saved at each promotion) |
+- **Approve Sat → Sun 00:30 drain promotes the build you approved.** ✓
+- **Change your mind after approving → delete `.state/pending-promotion.json` via the GitHub web UI and commit. Sunday's drain finds nothing, exits.** ✓
+- **Approve twice → second approval overwrites the pending file. Both approvals reference the same build image anyway.** ✓
+- **Don't approve → drain exits silently. Next Saturday either rebuilds (upstream changed) or skips (nothing new). You can approve any future Saturday to push current staging.** ✓
+- **Staging already matches prod → promote workflow detects matching digests and skips queuing. Drain does the same check as a second guard.** ✓
 
 ## Rolling back prod
 
-If a Sunday promotion turns out to be broken and you want to revert to last week's prod:
+If a promotion turns out to be broken, rollback is a single pointer move using `docker buildx imagetools`:
 
 ```bash
-docker pull ghcr.io/<your-user>/custom:16-prod-backup
-docker tag ghcr.io/<your-user>/custom:16-prod-backup ghcr.io/<your-user>/custom:16-prod-latest
-docker push ghcr.io/<your-user>/custom:16-prod-latest
+docker buildx imagetools create \
+  --tag ghcr.io/<owner>/frappe_stack:16-prod-latest \
+  ghcr.io/<owner>/frappe_stack:16-prod-backup
 ```
 
-Then redeploy on your server. The `:16-prod-backup` tag always holds the immediately-previous prod, so you have one-step rollback to last week's known-good image without needing to remember any specific version tag.
+Then trigger a Dokploy redeploy. `16-prod-backup` always holds the immediately-previous prod build — one command, no digging through version history.
 
-For older rollbacks (more than one week back), use the immutable `16-prod-YYYYMMDD-N` tags — they're never overwritten, so any past prod release is still pullable as long as you know the date and run number.
+For older rollbacks, use any `16-build-YYYYMMDD-N` tag still in GHCR (cleanup keeps the last 3 builds).
 
 ## Gotchas
 
-**Forgot to approve, want to push mid-week.** Click "Run workflow" on the **Drain Prod Queue** workflow manually. As long as `.state/pending-promotion.json` exists, it'll push. If it doesn't exist, run **Promote to Production** first to create it (you'll need to approve again), then run drain.
+**Forgot to approve, want to push mid-week.** Run **Promote to Production** (you'll need to approve again), then either wait for Sunday's drain or run **Drain Prod Queue** manually.
 
-**Force a staging build.** Run staging workflow manually with `force_build=true`.
+**Force a staging build despite no upstream changes.** Run the staging workflow manually with `force_rebuild=true`.
 
-**First run.** No `.state/last-build.json` yet, so everything counts as new. Staging builds normally.
+**First run.** No `.state/last-build.json` yet — everything counts as new. Staging builds normally.
 
-**Editing watched apps.** Edit `upstream-apps.json`, commit, push. Next Saturday's run uses the new config. That's the only place apps are listed — add the full entry (name, url, repo, track) for new apps, or remove the block to remove apps.
+**Editing watched apps.** Edit `upstream-apps.json`, commit, push. The next Saturday run picks up the changes automatically.
 
 ## Costs
 
-Public repo: free. Private repo: 2000 min/month free. Weekly schedule = ~4 builds/month × 20 min = 80 min/month. Very cheap.
+Public repo: free. Private repo: 2000 min/month free. Weekly schedule ≈ 4 builds/month × ~20 min = ~80 min/month.

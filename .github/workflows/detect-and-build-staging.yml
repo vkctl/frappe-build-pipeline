@@ -174,7 +174,7 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           DATE=$(date -u +%Y%m%d)
-          UNIQUE="16-staging-${DATE}-${{ github.run_number }}"
+          UNIQUE="16-build-${DATE}-${{ github.run_number }}"
           echo "unique_tag=ghcr.io/${OWNER}/frappe_stack:${UNIQUE}" >> "$GITHUB_OUTPUT"
           echo "latest_tag=ghcr.io/${OWNER}/frappe_stack:16-staging-latest" >> "$GITHUB_OUTPUT"
           echo "unique_only=${UNIQUE}" >> "$GITHUB_OUTPUT"
@@ -215,7 +215,7 @@ jobs:
           python3 -c "
           import json
           data = json.load(open('.state/current-versions.json'))
-          data['staging_tag'] = '${{ steps.tags.outputs.unique_only }}'
+          data['build_tag'] = '${{ steps.tags.outputs.unique_only }}'
           data['built_at'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
           json.dump(data, open('.state/last-build.json', 'w'), indent=2)
           open('.state/last-build.json', 'a').write('\n')

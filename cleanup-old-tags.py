@@ -1,38 +1,17 @@
 #!/usr/bin/env python3
 """
-Prune old GHCR image versions for the 'frappe_stack' package, keeping only the most
-recent N unique tags per environment (staging / prod), plus always preserving
-moving pointers.
+Prune old GHCR image versions for the 'frappe_stack' package.
 
-Why this exists instead of using actions/delete-package-versions:
-  - That action operates on package "versions" (image digests). When you ask
-    it to delete a version because of its tag, ALL tags on that image are lost.
-    Our images often have both a staging tag and a prod tag (because prod
-    promotion just retags the same image bytes). Deleting the version would
-    take both with it.
-  - We need: "untag this image's staging tag, but if the prod tag is still
-    needed, keep the underlying image alive."
+Train model: one pool of build images tagged 16-build-YYYYMMDD-N, with three
+moving pointer tags (16-staging-latest, 16-prod-latest, 16-prod-backup) that
+point into that pool. We keep the last KEEP_COUNT builds and always protect any
+build currently referenced by a pointer tag.
 
-How this works:
-  1. List all versions of the 'frappe_stack' package via GitHub API.
-  2. For each version, look at its tags.
-  3. Decide what to do with each tag:
-     - Moving pointers (16-staging-latest, 16-prod-latest, 16-prod-backup): keep.
-     - Recent unique tags (within KEEP_COUNT newest per env): keep.
-     - Older unique tags: remove (just the tag, not necessarily the image).
-  4. If a version has NO tags remaining after pruning, delete the version
-     (GHCR auto-untags-and-removes-image then).
-  5. If a version has tags remaining, leave it alone — GHCR doesn't support
-     deleting individual tags via API, only whole versions. But that's fine:
-     if a prod tag still references the image, we don't want it deleted anyway.
+Legacy tags (16-staging-DATE-N, 16-prod-DATE-N from the old model) are also
+collected and pruned, subject to the same pointer-protection rule.
 
-Reads:
-  - GITHUB_TOKEN env var (workflow provides automatically)
-  - GITHUB_REPOSITORY_OWNER env var (provided by workflow)
-  - KEEP_COUNT env var (default 3)
-
-Approach is conservative: when in doubt, keep. Better to leave a few extra
-old tags than to accidentally break a deploy.
+Conservative approach: when in doubt, keep. Better to leave a stale tag than
+to accidentally delete something a deploy depends on.
 """
 
 import json
@@ -40,7 +19,6 @@ import os
 import sys
 import urllib.request
 import urllib.error
-import urllib.parse
 
 API_ROOT = "https://api.github.com"
 PACKAGE_NAME = "frappe_stack"
@@ -48,16 +26,10 @@ KEEP_COUNT = int(os.environ.get("KEEP_COUNT", "3"))
 TOKEN = os.environ["GITHUB_TOKEN"]
 OWNER = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
 
-# Tags that should ALWAYS be preserved (moving pointers, anyone depends on these).
-ALWAYS_KEEP_TAGS = {
-    "16-staging-latest",
-    "16-prod-latest",
-    "16-prod-backup",
-}
+POINTER_TAGS = {"16-staging-latest", "16-prod-latest", "16-prod-backup"}
 
 
 def api(method: str, path: str) -> dict | list | None:
-    """Call GitHub REST API. Returns parsed JSON or None for 204."""
     url = f"{API_ROOT}{path}"
     req = urllib.request.Request(url, method=method)
     req.add_header("Authorization", f"Bearer {TOKEN}")
@@ -75,11 +47,9 @@ def api(method: str, path: str) -> dict | list | None:
 
 
 def list_versions() -> list:
-    """List all versions of the package. Paginates."""
     versions = []
     page = 1
     while True:
-        # User packages endpoint. If you ever move this to an org, switch to /orgs/{org}/...
         path = f"/user/packages/container/{PACKAGE_NAME}/versions?per_page=100&page={page}"
         batch = api("GET", path)
         if not batch:
@@ -92,27 +62,25 @@ def list_versions() -> list:
 
 
 def delete_version(version_id: int) -> None:
-    """Delete a package version by its numeric id."""
     api("DELETE", f"/user/packages/container/{PACKAGE_NAME}/versions/{version_id}")
 
 
-def classify_tag(tag: str) -> tuple[str, str] | None:
+def sort_key(tag: str) -> str | None:
     """
-    Categorize a tag.
-      Returns (env, sort_key) for prunable tags like 16-staging-20260523-1.
-      Returns None for tags we don't manage (latest pointers, unknown formats).
+    Return a lexicographically sortable key for prunable unique build tags.
+    Handles current format (16-build-YYYYMMDD-N) and legacy formats
+    (16-staging-YYYYMMDD-N, 16-prod-YYYYMMDD-N).
+    Returns None for pointer tags or unrecognised formats.
     """
-    if tag in ALWAYS_KEEP_TAGS:
-        return None  # preserved unconditionally elsewhere
-    # Match 16-staging-YYYYMMDD-N or 16-prod-YYYYMMDD-N
-    for env in ("staging", "prod"):
-        prefix = f"16-{env}-"
+    if tag in POINTER_TAGS:
+        return None
+    for prefix in ("16-build-", "16-staging-", "16-prod-"):
         if tag.startswith(prefix):
-            rest = tag[len(prefix):]
-            # rest should look like 20260523-1
-            if "-" in rest and rest.split("-")[0].isdigit():
-                # Sort key: date + run number, lexicographically sortable
-                return (env, rest)
+            rest = tag[len(prefix):]  # YYYYMMDD-N
+            parts = rest.split("-")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                # Zero-pad run number so lex sort == numeric sort.
+                return f"{parts[0]}-{int(parts[1]):06d}"
     return None
 
 
@@ -121,58 +89,48 @@ def main() -> None:
     versions = list_versions()
     print(f"Found {len(versions)} total versions.")
 
-    # Group prunable tags by environment, with their version IDs.
-    # Each entry: (sort_key, tag, version_id)
-    by_env: dict[str, list[tuple[str, str, int]]] = {"staging": [], "prod": []}
-
+    # Pass 1: find which version IDs carry a pointer tag — always protected.
+    pointer_version_ids: set[int] = set()
     for v in versions:
-        vid = v["id"]
+        tags = v.get("metadata", {}).get("container", {}).get("tags", []) or []
+        if any(t in POINTER_TAGS for t in tags):
+            pointer_version_ids.add(v["id"])
+
+    # Pass 2: collect all prunable unique build tags with their sort keys.
+    # (sort_key, tag_label, version_id)
+    build_entries: list[tuple[str, str, int]] = []
+    for v in versions:
         tags = v.get("metadata", {}).get("container", {}).get("tags", []) or []
         for tag in tags:
-            classified = classify_tag(tag)
-            if classified is None:
-                continue
-            env, sort_key = classified
-            by_env[env].append((sort_key, tag, vid))
+            key = sort_key(tag)
+            if key is not None:
+                build_entries.append((key, tag, v["id"]))
 
-    # For each env, sort newest-first and decide which tags fall outside KEEP_COUNT.
-    # The N most recent unique tags are KEPT (so their version IDs go into the
-    # "preserve" set). Older tags' version IDs go into the "candidate for deletion" set.
-    preserve_version_ids: set[int] = set()
-    deletion_candidates: set[int] = set()
+    build_entries.sort(key=lambda x: x[0], reverse=True)  # newest first
+    print(f"\nFound {len(build_entries)} prunable unique tag(s):")
 
-    for env, items in by_env.items():
-        items.sort(key=lambda x: x[0], reverse=True)  # newest first
-        print(f"\n{env}: found {len(items)} unique-tag entries")
-        for i, (sort_key, tag, vid) in enumerate(items):
-            if i < KEEP_COUNT:
-                preserve_version_ids.add(vid)
-                print(f"  KEEP  {tag} (version {vid})")
-            else:
-                deletion_candidates.add(vid)
-                print(f"  PRUNE {tag} (version {vid})")
+    preserve: set[int] = set(pointer_version_ids)
+    candidates: set[int] = set()
 
-    # Also preserve any version that currently has a moving pointer tag.
-    # We must never delete the image those depend on.
-    for v in versions:
-        vid = v["id"]
-        tags = v.get("metadata", {}).get("container", {}).get("tags", []) or []
-        if any(t in ALWAYS_KEEP_TAGS for t in tags):
-            if vid in deletion_candidates:
-                deletion_candidates.discard(vid)
-                print(f"\nProtected version {vid} from deletion (carries moving pointer: {tags})")
-            preserve_version_ids.add(vid)
+    for i, (_, tag, vid) in enumerate(build_entries):
+        protected_by_pointer = vid in pointer_version_ids
+        keep = i < KEEP_COUNT or protected_by_pointer
+        if keep:
+            label = "KEEP (pointer)" if protected_by_pointer and i >= KEEP_COUNT else "KEEP"
+            preserve.add(vid)
+            print(f"  {label:<16} {tag} (version {vid})")
+        else:
+            candidates.add(vid)
+            print(f"  PRUNE            {tag} (version {vid})")
 
-    # Also protect versions that have *both* a kept tag and an old tag.
-    # (Already handled — preserve_version_ids takes precedence below.)
-    deletion_candidates -= preserve_version_ids
+    candidates -= preserve
 
-    if not deletion_candidates:
+    if not candidates:
         print("\nNothing to delete. Done.")
         return
 
-    print(f"\nDeleting {len(deletion_candidates)} version(s)...")
-    for vid in sorted(deletion_candidates):
+    print(f"\nDeleting {len(candidates)} version(s)...")
+    for vid in sorted(candidates):
         try:
             delete_version(vid)
             print(f"  deleted version {vid}")

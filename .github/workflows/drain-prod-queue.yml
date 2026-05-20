@@ -32,11 +32,11 @@ jobs:
             echo "pending=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          TAG=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['staging_tag'])")
+          TAG=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['build_tag'])")
           APPROVED_BY=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['approved_by'])")
           echo "Found pending promotion: $TAG (approved by $APPROVED_BY)"
           echo "pending=true" >> "$GITHUB_OUTPUT"
-          echo "staging_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "build_tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.pending == 'true'
@@ -59,7 +59,7 @@ jobs:
         id: digest_check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
+          BUILD_TAG: ${{ steps.check.outputs.build_tag }}
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
@@ -82,7 +82,7 @@ jobs:
               | tr -d '\r\n'
           }
 
-          STAGING_DIGEST=$(get_digest "$STAGING_TAG")
+          STAGING_DIGEST=$(get_digest "$BUILD_TAG")
           PROD_DIGEST=$(get_digest "16-prod-latest")
 
           echo "Staging tag digest: ${STAGING_DIGEST:-<none>}"
@@ -95,12 +95,9 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Back up the CURRENT prod image before overwriting it.
-      # Pulls :16-prod-latest, retags as :16-prod-backup, pushes.
-      # If :16-prod-latest doesn't exist yet (very first promotion ever),
-      # the pull fails — we catch that and continue, since there's nothing to back up.
-      # Also captures the unique tag of what was backed up, so we can tell you in Telegram.
-      - name: Back up current prod image
+      # Move the backup pointer to wherever prod-latest currently points.
+      # Pure registry metadata operation — no image data transferred.
+      - name: Move backup pointer
         if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         id: backup
         env:
@@ -110,47 +107,32 @@ jobs:
           CURRENT_PROD="ghcr.io/${OWNER}/frappe_stack:16-prod-latest"
           BACKUP_TAG="ghcr.io/${OWNER}/frappe_stack:16-prod-backup"
 
-          echo "Attempting to back up current prod ($CURRENT_PROD)..."
-          if docker pull "$CURRENT_PROD" 2>/dev/null; then
-            # Get the unique tag this image originally had, via the org.opencontainers label
-            # we'd ideally set at build time. For now, just record the digest for traceability.
-            DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$CURRENT_PROD" 2>/dev/null || echo "unknown")
-            echo "Current prod digest: $DIGEST"
-
-            docker tag "$CURRENT_PROD" "$BACKUP_TAG"
-            docker push "$BACKUP_TAG"
-            echo "Backup pushed: $BACKUP_TAG"
+          if docker buildx imagetools inspect "$CURRENT_PROD" >/dev/null 2>&1; then
+            docker buildx imagetools create --tag "$BACKUP_TAG" "$CURRENT_PROD"
+            echo "Backup pointer → current prod."
             echo "backed_up=true" >> "$GITHUB_OUTPUT"
-            echo "backup_digest=$DIGEST" >> "$GITHUB_OUTPUT"
           else
-            echo "No existing :16-prod-latest found (first promotion?). Nothing to back up."
+            echo "No existing :16-prod-latest (first promotion). Skipping backup."
             echo "backed_up=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # The actual promotion: pull the staging image, retag as prod, push.
-      # No rebuild — same exact image bytes you tested on Saturday.
-      - name: Promote staging image to prod
+      # Move the prod pointer to the approved build image.
+      # No separate prod-specific tag is created — prod-latest just points into
+      # the same build pool as staging-latest. Pure manifest pointer update.
+      - name: Move prod pointer
         if: steps.check.outputs.pending == 'true' && steps.digest_check.outputs.skip != 'true'
         id: promote
         env:
-          STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
+          BUILD_TAG: ${{ steps.check.outputs.build_tag }}
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          STAGING_FULL="ghcr.io/${OWNER}/frappe_stack:${STAGING_TAG}"
-          # Replace "staging" -> "prod" in the tag name to keep the date/run-number traceable.
-          PROD_UNIQUE_TAG="ghcr.io/${OWNER}/frappe_stack:${STAGING_TAG/staging/prod}"
-          PROD_LATEST_TAG="ghcr.io/${OWNER}/frappe_stack:16-prod-latest"
+          BUILD_FULL="ghcr.io/${OWNER}/frappe_stack:${BUILD_TAG}"
+          PROD_LATEST="ghcr.io/${OWNER}/frappe_stack:16-prod-latest"
 
-          echo "Pulling $STAGING_FULL"
-          docker pull "$STAGING_FULL"
+          echo "Moving prod pointer → $BUILD_FULL"
+          docker buildx imagetools create --tag "$PROD_LATEST" "$BUILD_FULL"
 
-          docker tag "$STAGING_FULL" "$PROD_UNIQUE_TAG"
-          docker push "$PROD_UNIQUE_TAG"
-
-          docker tag "$STAGING_FULL" "$PROD_LATEST_TAG"
-          docker push "$PROD_LATEST_TAG"
-
-          echo "prod_tag=$PROD_UNIQUE_TAG" >> "$GITHUB_OUTPUT"
+          echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
 
       # Archive the pending file (audit trail) and commit. The catchup check on
       # the next Saturday run reads from GHCR directly, so we no longer need to
@@ -158,7 +140,7 @@ jobs:
       - name: Archive pending promotion
         if: steps.check.outputs.pending == 'true'
         env:
-          STAGING_TAG: ${{ steps.check.outputs.staging_tag }}
+          BUILD_TAG: ${{ steps.check.outputs.build_tag }}
           SKIPPED: ${{ steps.digest_check.outputs.skip }}
         run: |
           mkdir -p .state/history
@@ -169,9 +151,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .state/
           if [ "$SKIPPED" = "true" ]; then
-            git commit -m "Skip promotion (already in prod): $STAGING_TAG"
+            git commit -m "Skip promotion (already in prod): $BUILD_TAG"
           else
-            git commit -m "Promoted to prod: $STAGING_TAG"
+            git commit -m "Promoted to prod: $BUILD_TAG"
           fi
           git push
 
@@ -181,7 +163,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TAG: ${{ steps.check.outputs.staging_tag }}
+          TAG: ${{ steps.check.outputs.build_tag }}
         run: |
           if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
           curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
@@ -194,7 +176,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TAG: ${{ steps.promote.outputs.prod_tag }}
+          TAG: ${{ steps.promote.outputs.build_tag }}
           BACKED_UP: ${{ steps.backup.outputs.backed_up }}
         run: |
           if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
