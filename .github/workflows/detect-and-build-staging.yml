@@ -53,14 +53,25 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
+          # Exchange GITHUB_TOKEN for a proper GHCR registry token before hitting
+          # the v2 manifests API. Using the raw GITHUB_TOKEN as a Bearer token
+          # directly does not work — GHCR requires a token obtained via its
+          # token endpoint.
+          GHCR_TOKEN=$(curl -fsSL \
+            -u "token:$GH_TOKEN" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${OWNER}/frappe_stack:pull" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('token') or d.get('access_token') or '')" \
+            2>/dev/null) || GHCR_TOKEN=""
+
           # Helper: fetch the manifest digest for a tag via GHCR registry API.
           # Returns empty string if the tag doesn't exist (first build, etc).
           # The Accept header matters: container images can have multiple manifest
           # types, and we ask for them all so the digest header is populated.
           get_digest() {
             local tag="$1"
+            [ -z "$GHCR_TOKEN" ] && { echo ""; return; }
             curl -sS -o /dev/null -D - \
-              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Authorization: Bearer $GHCR_TOKEN" \
               -H 'Accept: application/vnd.oci.image.index.v1+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \

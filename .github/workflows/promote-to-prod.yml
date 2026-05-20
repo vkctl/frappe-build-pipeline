@@ -43,9 +43,18 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
+          # GITHUB_TOKEN is not a valid GHCR registry Bearer token directly.
+          # Exchange it first via the GHCR token endpoint, then use the result.
+          GHCR_TOKEN=$(curl -fsSL \
+            -u "token:$GH_TOKEN" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${OWNER}/frappe_stack:pull" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('token') or d.get('access_token') or '')" \
+            2>/dev/null) || GHCR_TOKEN=""
+
           get_digest() {
+            [ -z "$GHCR_TOKEN" ] && { echo ""; return; }
             curl -sS -o /dev/null -D - \
-              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Authorization: Bearer $GHCR_TOKEN" \
               -H 'Accept: application/vnd.oci.image.index.v1+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
