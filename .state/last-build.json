@@ -2,8 +2,8 @@
   "apps": {
     "erpnext": {
       "repo": "frappe/erpnext",
-      "ref": "v16.18.3",
-      "sha": "2807c9f08fff3f161c0a2e10745a26aa6331ffd5"
+      "ref": "v16.19.0",
+      "sha": "fdfcbf72bd264a230ffa398a8c3bfdd0432de891"
     },
     "hrms": {
       "repo": "frappe/hrms",
@@ -36,6 +36,6 @@
       "sha": "ba30599ae8553cba3791ad163e09bf8df04053b6"
     }
   },
-  "staging_tag": "16-staging-20260519-6",
-  "built_at": "2026-05-19T11:51:05Z"
+  "staging_tag": "16-staging-20260520-11",
+  "built_at": "2026-05-20T06:08:01Z"
 }
