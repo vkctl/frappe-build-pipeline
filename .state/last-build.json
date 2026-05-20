@@ -2,13 +2,13 @@
   "apps": {
     "erpnext": {
       "repo": "frappe/erpnext",
-      "ref": "v16.19.0",
-      "sha": "fdfcbf72bd264a230ffa398a8c3bfdd0432de891"
+      "ref": "v16.19.1",
+      "sha": "6ef4a2d82cfe3815a8bd491436256df3e4ed79b8"
     },
     "hrms": {
       "repo": "frappe/hrms",
-      "ref": "v16.7.0",
-      "sha": "a29cc8875aab1f22707b011568f5f1f190861fc8"
+      "ref": "v16.7.1",
+      "sha": "fe9ad9d362406a1ec3f394e14f6b3d5684c79b83"
     },
     "india-compliance": {
       "repo": "resilient-tech/india-compliance",
@@ -36,6 +36,6 @@
       "sha": "ba30599ae8553cba3791ad163e09bf8df04053b6"
     }
   },
-  "staging_tag": "16-staging-20260520-11",
-  "built_at": "2026-05-20T06:08:01Z"
+  "build_tag": "16-build-20260520-19",
+  "built_at": "2026-05-20T11:57:59Z"
 }
