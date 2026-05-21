@@ -12,13 +12,13 @@
     },
     "india-compliance": {
       "repo": "resilient-tech/india-compliance",
-      "ref": "v16.4.0",
-      "sha": "80b315689a42a4c1ba747a05b82fdce61fefa021"
+      "ref": "v16.5.0",
+      "sha": "11d6c35dde848b99d42f5c2178ac5a9c1b1c2057"
     },
     "insights": {
       "repo": "frappe/insights",
-      "ref": "v3.9.10",
-      "sha": "b28760b9955fe8fa2d0311f0e2b330d9724809ff"
+      "ref": "v3.9.11",
+      "sha": "e0a1d98d62f5f330d0530f610a3153c0a0688025"
     },
     "frappe-whatsapp": {
       "repo": "shridarpatil/frappe_whatsapp",
@@ -36,6 +36,6 @@
       "sha": "ba30599ae8553cba3791ad163e09bf8df04053b6"
     }
   },
-  "build_tag": "16-build-20260520-19",
-  "built_at": "2026-05-20T11:57:59Z"
+  "build_tag": "16-build-20260521-20",
+  "built_at": "2026-05-21T16:56:46Z"
 }
