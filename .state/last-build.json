@@ -22,8 +22,8 @@
     },
     "frappe-whatsapp": {
       "repo": "shridarpatil/frappe_whatsapp",
-      "ref": "v1.0.11",
-      "sha": "25f340587815e1f8d0d3d99acc64fcf131079b30"
+      "ref": "master",
+      "sha": "7967eb751089d2926a3fd1c0e6f4e4f130db8bef"
     },
     "offsite-backups": {
       "repo": "frappe/offsite_backups",
@@ -36,6 +36,6 @@
       "sha": "ba30599ae8553cba3791ad163e09bf8df04053b6"
     }
   },
-  "build_tag": "16-build-20260521-20",
-  "built_at": "2026-05-21T16:56:46Z"
+  "build_tag": "16-build-20260522-21",
+  "built_at": "2026-05-22T20:29:53Z"
 }
