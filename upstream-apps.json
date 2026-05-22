@@ -33,7 +33,8 @@
       "name": "frappe-whatsapp",
       "url": "https://github.com/shridarpatil/frappe_whatsapp",
       "repo": "shridarpatil/frappe_whatsapp",
-      "track": "latest_tag"
+      "track": "branch",
+      "branch": "master"
     },
     {
       "name": "offsite-backups",
