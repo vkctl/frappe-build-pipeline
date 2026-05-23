@@ -1,12 +1,12 @@
 name: Drain Prod Queue
 
-# Runs every Sunday at 00:30 IST = Saturday 19:00 UTC.
-# day-of-week 6 = Saturday UTC, which is Sunday 00:30 IST.
+# Runs every Sunday at 01:00 IST = Saturday 19:30 UTC.
+# day-of-week 6 = Saturday UTC, which is Sunday 01:00 IST.
 # If there's a pending promotion (you approved on Saturday), it pushes to prod.
 # If nothing's pending, it exits quietly with no notification.
 on:
   schedule:
-    - cron: '0 19 * * 6'
+    - cron: '30 19 * * 6'
   workflow_dispatch:   # also allow manual run, useful for testing
 
 permissions:

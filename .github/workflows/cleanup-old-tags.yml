@@ -1,11 +1,11 @@
 name: Cleanup Old Image Tags
 
-# Runs every Sunday at 02:00 IST = Saturday 20:30 UTC, 90 min after the drain.
+# Runs every Sunday at 02:30 IST = Saturday 21:00 UTC, 90 min after the drain.
 # This gives the drain time to finish promoting and writing state before we start
 # deleting. Also runnable manually for ad-hoc cleanup.
 on:
   schedule:
-    - cron: '30 20 * * 6'
+    - cron: '0 21 * * 6'
   workflow_dispatch:
     inputs:
       keep_count:

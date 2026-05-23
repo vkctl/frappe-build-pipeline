@@ -6,8 +6,8 @@
 |---|---|
 | **Sat 00:30** | Auto-check upstream repos. If anything changed, build a new image (`16-build-DATE-N`), point `16-staging-latest` at it, deploy to staging, Telegram you. |
 | **Sat anytime** | You test staging. When ready, click **Run workflow** on **Promote to Production** and approve in the GitHub mobile app. Workflow checks staging ≠ prod (skips if already same), writes `.state/pending-promotion.json`. |
-| **Sun 00:30** | Auto-drain: if approved, move `16-prod-backup` → current prod, move `16-prod-latest` → the approved build image. No image data copied — pure registry pointer updates. |
-| **Sun 02:00** | Auto-cleanup: delete old `16-build-*` images beyond the last 3, protecting anything currently referenced by a pointer tag. |
+| **Sun 01:00** | Auto-drain: if approved, move `16-prod-backup` → current prod, move `16-prod-latest` → the approved build image. No image data copied — pure registry pointer updates. |
+| **Sun 02:30** | Auto-cleanup: delete old `16-build-*` images beyond the last 4, protecting anything currently referenced by a pointer tag. |
 
 If you don't approve on Saturday, Sunday's drain finds nothing pending and exits silently. The next Saturday build overwrites `16-staging-latest` if upstream changed.
 
@@ -88,7 +88,7 @@ Cleanup keeps the last 3 build images. Any build currently referenced by `16-sta
 
 ## Queue correctness scenarios
 
-- **Approve Sat → Sun 00:30 drain promotes the build you approved.** ✓
+- **Approve Sat → Sun 01:00 drain promotes the build you approved.** ✓
 - **Change your mind after approving → delete `.state/pending-promotion.json` via the GitHub web UI and commit. Sunday's drain finds nothing, exits.** ✓
 - **Approve twice → second approval overwrites the pending file. Both approvals reference the same build image anyway.** ✓
 - **Don't approve → drain exits silently. Next Saturday either rebuilds (upstream changed) or skips (nothing new). You can approve any future Saturday to push current staging.** ✓
