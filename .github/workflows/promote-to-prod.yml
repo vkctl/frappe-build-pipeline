@@ -70,6 +70,15 @@ jobs:
           echo "Staging digest: ${STAGING_DIGEST:-<none>}"
           echo "Prod digest:    ${PROD_DIGEST:-<none>}"
 
+          # Freeze the staging digest at approval time. This immutable digest — not
+          # the (possibly stale) build_tag from last-build.json — is what the drain
+          # promotes. Guards against last-build.json drifting from 16-staging-latest.
+          if [ -z "$STAGING_DIGEST" ]; then
+            echo "::error::Could not resolve 16-staging-latest digest from GHCR. Aborting."
+            exit 1
+          fi
+          echo "staging_digest=$STAGING_DIGEST" >> "$GITHUB_OUTPUT"
+
           if [ -n "$PROD_DIGEST" ] && [ "$STAGING_DIGEST" = "$PROD_DIGEST" ]; then
             echo "Staging and prod are the same image. Nothing to promote."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -101,6 +110,7 @@ jobs:
           cat > .state/pending-promotion.json <<EOF
           {
             "build_tag": "${{ steps.read.outputs.build_tag }}",
+            "staging_digest": "${{ steps.hash_check.outputs.staging_digest }}",
             "approved_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "approved_by": "${{ github.actor }}"
           }

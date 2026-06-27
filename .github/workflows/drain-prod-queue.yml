@@ -34,9 +34,15 @@ jobs:
           fi
           TAG=$(python3 -c "import json; d=json.load(open('.state/pending-promotion.json')); print(d.get('build_tag') or d['staging_tag'])")
           APPROVED_BY=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json'))['approved_by'])")
+          # Digest frozen at approval time (Option A). May be empty for legacy
+          # pending files written before this field existed — drain falls back to
+          # resolving build_tag in that case.
+          DIGEST=$(python3 -c "import json; print(json.load(open('.state/pending-promotion.json')).get('staging_digest',''))")
           echo "Found pending promotion: $TAG (approved by $APPROVED_BY)"
+          echo "Frozen digest: ${DIGEST:-<none, legacy>}"
           echo "pending=true" >> "$GITHUB_OUTPUT"
           echo "build_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "staging_digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       # Skip the promotion if the pending staging tag already matches prod.
       # This guards against a drain run where prod was somehow already updated
@@ -48,6 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_TAG: ${{ steps.check.outputs.build_tag }}
+          FROZEN_DIGEST: ${{ steps.check.outputs.staging_digest }}
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
@@ -70,11 +77,19 @@ jobs:
               | tr -d '\r\n'
           }
 
-          STAGING_DIGEST=$(get_digest "$BUILD_TAG")
+          # Use the digest frozen at approval time. This is the same reference
+          # promote checked, so promote and drain can never disagree (the bug that
+          # caused queue-forever/drain-nothing). Fall back to resolving build_tag
+          # only for legacy pending files written before staging_digest existed.
+          if [ -n "$FROZEN_DIGEST" ]; then
+            STAGING_DIGEST="$FROZEN_DIGEST"
+          else
+            STAGING_DIGEST=$(get_digest "$BUILD_TAG")
+          fi
           PROD_DIGEST=$(get_digest "16-prod-latest")
 
-          echo "Staging tag digest: ${STAGING_DIGEST:-<none>}"
-          echo "Prod digest:        ${PROD_DIGEST:-<none>}"
+          echo "Approved digest: ${STAGING_DIGEST:-<none>}"
+          echo "Prod digest:     ${PROD_DIGEST:-<none>}"
 
           if [ -n "$PROD_DIGEST" ] && [ "$STAGING_DIGEST" = "$PROD_DIGEST" ]; then
             echo "Already promoted. Skipping redundant push."
@@ -124,13 +139,22 @@ jobs:
         id: promote
         env:
           BUILD_TAG: ${{ steps.check.outputs.build_tag }}
+          FROZEN_DIGEST: ${{ steps.check.outputs.staging_digest }}
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          BUILD_FULL="ghcr.io/${OWNER}/frappe_stack:${BUILD_TAG}"
           PROD_LATEST="ghcr.io/${OWNER}/frappe_stack:16-prod-latest"
 
-          echo "Moving prod pointer → $BUILD_FULL"
-          docker buildx imagetools create --tag "$PROD_LATEST" "$BUILD_FULL"
+          # Promote by the frozen digest — the exact image approved on Saturday,
+          # immune to last-build.json drift. build_tag is kept only for readable
+          # commit messages / Telegram. Legacy pending files fall back to the tag.
+          if [ -n "$FROZEN_DIGEST" ]; then
+            SOURCE="ghcr.io/${OWNER}/frappe_stack@${FROZEN_DIGEST}"
+            echo "Moving prod pointer → $SOURCE (build $BUILD_TAG)"
+          else
+            SOURCE="ghcr.io/${OWNER}/frappe_stack:${BUILD_TAG}"
+            echo "Moving prod pointer → $SOURCE (legacy: no frozen digest)"
+          fi
+          docker buildx imagetools create --tag "$PROD_LATEST" "$SOURCE"
 
           echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
 
