@@ -146,6 +146,23 @@ jobs:
             echo "::notice::No upstream changes. Skipping build (pass force_rebuild=true to override)."
           fi
 
+      # ubuntu-latest ships only ~14 GB free on /, but preloads ~25-30 GB of
+      # toolchains we never use (Android SDK, .NET, GHC, CodeQL). The Frappe
+      # layered image build exhausts the disk mid-step, crashing the runner with
+      # "No space left on device" AFTER the image is pushed but BEFORE the state
+      # commit runs — the root cause of last-build.json drift. Reclaim space first.
+      - name: Free up disk space
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/.ghcup \
+                      /usr/local/share/powershell /usr/share/swift || true
+          sudo docker image prune --all --force || true
+          echo "After cleanup:"
+          df -h /
+
       - name: Clone frappe_docker
         if: steps.decide.outputs.build == 'true'
         uses: actions/checkout@v4
@@ -207,7 +224,11 @@ jobs:
           secret-files: |
             "apps_json=frappe_docker/apps.json"
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=min caches far less to local disk than mode=max (less disk
+          # pressure on the runner); ignore-error means a cache export failure
+          # can never fail the step after the image has already been pushed —
+          # which would otherwise skip the state commit and cause drift.
+          cache-to: type=gha,mode=min,ignore-error=true
 
       - name: Update state file
         if: steps.decide.outputs.build == 'true'
