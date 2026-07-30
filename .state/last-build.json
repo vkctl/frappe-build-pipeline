@@ -2,23 +2,23 @@
   "apps": {
     "erpnext": {
       "repo": "frappe/erpnext",
-      "ref": "v16.21.1",
-      "sha": "6bcab7cfc8df98660a6b61422bc8765cf58552f1"
+      "ref": "v16.30.0",
+      "sha": "8378b6e203841c056925420cc44e6d631c915cf1"
     },
     "hrms": {
       "repo": "frappe/hrms",
-      "ref": "v16.8.0",
-      "sha": "8f76abeaf55ce9c40d3d5ed96d48132e5a98ceea"
+      "ref": "v16.15.0",
+      "sha": "1924234884731e389ecc4e5500653fcd59666911"
     },
     "india-compliance": {
       "repo": "resilient-tech/india-compliance",
-      "ref": "v16.6.0",
-      "sha": "7b98500d9dab1c9456ec4663b7a2b6a0ebd6a211"
+      "ref": "v16.8.1",
+      "sha": "d420e883a302901349ac184bec8e96f83f2fb240"
     },
     "insights": {
       "repo": "frappe/insights",
-      "ref": "v3.10.0",
-      "sha": "910da54554e5bb457c154910ce7808795ab89239"
+      "ref": "v3.12.3",
+      "sha": "c86c12acb13ae6a09bd1e00dcb0492a0004f4f51"
     },
     "frappe-whatsapp": {
       "repo": "shridarpatil/frappe_whatsapp",
@@ -29,13 +29,8 @@
       "repo": "frappe/offsite_backups",
       "ref": "version-16",
       "sha": "67c1d2416fda733e6d1c740b36a55a60bd7ef686"
-    },
-    "mint": {
-      "repo": "The-Commit-Company/mint",
-      "ref": "v1.5.3",
-      "sha": "ba30599ae8553cba3791ad163e09bf8df04053b6"
     }
   },
-  "build_tag": "16-build-20260619-25",
-  "built_at": "2026-06-19T21:02:41Z"
+  "build_tag": "16-build-20260730-35",
+  "built_at": "2026-07-30T16:42:08Z"
 }
