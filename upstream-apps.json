@@ -42,12 +42,6 @@
       "repo": "frappe/offsite_backups",
       "track": "branch",
       "branch": "version-16"
-    },
-    {
-      "name": "mint",
-      "url": "https://github.com/The-Commit-Company/mint",
-      "repo": "The-Commit-Company/mint",
-      "track": "latest_tag"
     }
   ]
 }
