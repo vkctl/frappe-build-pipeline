@@ -2,28 +2,28 @@
   "apps": {
     "erpnext": {
       "repo": "frappe/erpnext",
-      "ref": "v16.30.0",
-      "sha": "8378b6e203841c056925420cc44e6d631c915cf1"
+      "ref": "v16.34.1",
+      "sha": "0b50853985312bc64977f9324c55b5d8c1ab2e59"
     },
     "hrms": {
       "repo": "frappe/hrms",
-      "ref": "v16.15.0",
-      "sha": "1924234884731e389ecc4e5500653fcd59666911"
+      "ref": "v16.17.1",
+      "sha": "e1481b5cd038657d82357d91a2d81cc84c707016"
     },
     "india-compliance": {
       "repo": "resilient-tech/india-compliance",
-      "ref": "v16.8.1",
-      "sha": "d420e883a302901349ac184bec8e96f83f2fb240"
+      "ref": "v16.9.0",
+      "sha": "071b544ac4440636e643fc383ed67a116a276691"
     },
     "insights": {
       "repo": "frappe/insights",
-      "ref": "v3.12.3",
-      "sha": "c86c12acb13ae6a09bd1e00dcb0492a0004f4f51"
+      "ref": "v3.13.2",
+      "sha": "b7bf01ad60d5ae45a9863e81ab89c24785adfade"
     },
     "frappe-whatsapp": {
       "repo": "shridarpatil/frappe_whatsapp",
       "ref": "master",
-      "sha": "8441c3820c98828aa1f53faf47e7392d7d270748"
+      "sha": "08bc1f6af2e36022d7a5f77641c8ba2ef8c16aaa"
     },
     "offsite-backups": {
       "repo": "frappe/offsite_backups",
@@ -31,6 +31,6 @@
       "sha": "67c1d2416fda733e6d1c740b36a55a60bd7ef686"
     }
   },
-  "build_tag": "16-build-20260730-35",
-  "built_at": "2026-07-30T16:42:08Z"
+  "build_tag": "16-build-20260906-42",
+  "built_at": "2026-09-06T14:58:52Z"
 }
